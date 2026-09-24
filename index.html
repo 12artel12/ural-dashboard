@@ -4,8 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>УФО — аналитический дашборд</title>
-<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://cdn.jsdelivr.net/npm/leaflet@1.9.4/dist/leaflet.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
 <style>
 :root{
@@ -172,6 +172,7 @@ if(regionSelect){
 const map=L.map('map',{zoomControl:false,attributionControl:false,scrollWheelZoom:false});
 const layerGroup=L.layerGroup().addTo(map);
 let geoCache={};
+let lastMapLayers=[];
 
 function value(region,key,month){
  if(month==='ALL') return MONTHS.reduce((s,m)=>s+(region.data[key][m]||0),0);
@@ -240,9 +241,9 @@ async function drawMap(filtered,month,compare){
   }catch(e){console.warn(e);return null}
  });
  await Promise.all(promises);
- const all=layerGroup.getLayers();
- if(all.length){
-  const group=L.featureGroup(all);
+ lastMapLayers=layerGroup.getLayers();
+ if(lastMapLayers.length){
+  const group=L.featureGroup(lastMapLayers);
   map.fitBounds(group.getBounds(),{padding:[28,28],maxZoom:5});
  }
 }
@@ -308,7 +309,7 @@ document.getElementById('mapReset').onclick=()=>{
  selectedRegion=null; hoveredRegion=null;
  const rs=document.getElementById('regionSelect'); if(rs) rs.value='';
  render();
- if(all.length){map.fitBounds(L.featureGroup(all).getBounds(),{padding:[28,28],maxZoom:5});}
+ if(lastMapLayers.length){map.fitBounds(L.featureGroup(lastMapLayers).getBounds(),{padding:[28,28],maxZoom:5});}
  renderTrend(null);
 };
 render();
