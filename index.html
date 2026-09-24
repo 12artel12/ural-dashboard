@@ -96,12 +96,8 @@ canvas{width:100%!important;height:100%!important}
     <div class="gradient"></div>
     <div class="legend-scale"><span>−10%</span><span>0%</span><span>+10%</span></div>
    </div>
-   <div class="about">
-    <div class="title">ⓘ Об УФО</div>
-    <div id="aboutTotal">— упоминаний</div>
-    <div id="aboutDyn" class="pos">—</div>
    </div>
-  </aside>
+ </aside>
 
   <section class="mapbox">
    <div class="map-head"><h2 id="mapTitle">Карта УФО — Депутаты</h2><p id="mapSubtitle">Объём упоминаний и динамика к предыдущему периоду</p></div>
@@ -111,7 +107,10 @@ canvas{width:100%!important;height:100%!important}
 
   <section class="rightbox">
    <div class="section">
-    <h3 id="cardsTitle">Ключевые показатели УФО — Депутаты</h3>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
+     <h3 id="cardsTitle" style="margin:0">Ключевые показатели — Депутаты</h3>
+     <div class="ctrl" style="padding:5px 8px"><label>Регион</label><select id="regionSelect"><option value="">Выберите регион</option></select></div>
+    </div>
     <div class="cards" id="cards"></div>
    </div>
    <div class="section">
@@ -158,6 +157,17 @@ CATS.forEach((c,i)=>{
  tabsEl.appendChild(b);
 });
 let activeCat=CATS[0].key;
+let selectedRegion=null;
+let hoveredRegion=null;
+
+const regionSelect=document.getElementById('regionSelect');
+if(regionSelect){
+ regionSelect.innerHTML='<option value="">Выберите регион</option>'+DATA.map(r=>`<option value="${r.name}">${r.name}</option>`).join('');
+ regionSelect.addEventListener('change',()=>{
+  selectedRegion=DATA.find(r=>r.name===regionSelect.value)||null;
+  render();
+ });
+}
 
 const map=L.map('map',{zoomControl:false,attributionControl:false,scrollWheelZoom:false});
 const layerGroup=L.layerGroup().addTo(map);
@@ -217,9 +227,14 @@ async function drawMap(filtered,month,compare){
     color:'#bfe9ff',weight:1.3,opacity:.9,fillColor:color(d===null?0:d),fillOpacity:.78
    }});
    lyr.bindTooltip(`<div style="font-weight:750">${r.name}</div><div>${fmt(v)}</div><div style="color:${d===null?'#9db0bf':d>=0?'#35ee81':'#ff8078'}">${d===null?'—':pct(d)}</div>`,{sticky:true,direction:'center'});
-   lyr.on('mouseover',e=>{e.target.setStyle({weight:3,color:'#ffffff',fillOpacity:.92});e.target.bringToFront();hoveredRegion=r;renderTrend(r);});
-   lyr.on('mouseout',e=>{e.target.setStyle({weight:1.3,color:'#bfe9ff',fillOpacity:.78});hoveredRegion=null;renderTrend(selectedRegion);});
-   lyr.on('click',e=>{selectedRegion=r;map.fitBounds(e.target.getBounds(),{padding:[55,55],maxZoom:7});renderTrend(r);});
+   lyr.on('mouseover',e=>{e.target.setStyle({weight:3,color:'#ffffff',fillOpacity:.92});e.target.bringToFront();});
+   lyr.on('mouseout',e=>{e.target.setStyle({weight:1.3,color:'#bfe9ff',fillOpacity:.78});});
+   lyr.on('click',e=>{
+    selectedRegion=r;
+    map.fitBounds(e.target.getBounds(),{padding:[55,55],maxZoom:7});
+    const rs=document.getElementById('regionSelect'); if(rs) rs.value=r.name;
+    render();
+   });
    lyr.addTo(layerGroup);
    return lyr;
   }catch(e){console.warn(e);return null}
@@ -233,8 +248,6 @@ async function drawMap(filtered,month,compare){
 }
 
 let trendChart=null;
-let selectedRegion=null;
-let hoveredRegion=null;
 
 function renderTrend(region=null){
  const month=monthEl.value, compare=month==='ALL'?'':compareEl.value;
@@ -272,16 +285,17 @@ function render(){
  const prev=rows.reduce((s,x)=>s+x.p,0);
  const dyn=prev?((total-prev)/prev*100):null;
 
- document.getElementById('aboutTotal').textContent=fmt(total)+' упоминаний';
- document.getElementById('aboutDyn').textContent=dyn===null?'—':' '+pct(dyn)+' к '+compare.toLowerCase()+' 2026';
  document.getElementById('mapTitle').textContent='Карта УФО — '+cat.name;
- document.getElementById('cardsTitle').textContent='Ключевые показатели УФО — '+cat.name;
- document.getElementById('chartTitle').textContent='Динамика упоминаний в УФО — '+cat.name;
+ document.getElementById('cardsTitle').textContent=selectedRegion ? 'Ключевые показатели — '+cat.name+' · '+selectedRegion.name : 'Ключевые показатели — '+cat.name;
+ document.getElementById('chartTitle').textContent='Динамика упоминаний в '+(selectedRegion ? selectedRegion.name : 'УФО')+' — '+cat.name;
  document.getElementById('mapSubtitle').textContent=month==='ALL'?'Апрель — Сентябрь 2026 · объём за весь доступный период':'Объём упоминаний и динамика к '+compare.toLowerCase()+' 2026';
 
- document.getElementById('cards').innerHTML=rows.map(x=>{
-  return `<div class="region-card"><div class="rname">${x.r.name}</div><div class="rval">${fmt(x.v)}</div><div class="rdyn">${x.d===null?'—':pct(x.d)}</div></div>`;
- }).join('');
+ const cards=document.getElementById('cards');
+ if(selectedRegion){
+  cards.innerHTML=MONTHS.map(m=>`<div class="region-card" style="min-height:78px"><div class="rname">${m} 2026</div><div class="rval">${fmt(value(selectedRegion,activeCat,m))}</div></div>`).join('');
+ }else{
+  cards.innerHTML='<div style="grid-column:1/-1;color:#8ea3b5;padding:18px 8px;text-align:center">Выберите регион на карте или в списке выше</div>';
+ }
 
 
 
@@ -292,7 +306,8 @@ monthEl.onchange=()=>{syncCompare();render();};
 compareEl.onchange=render;
 document.getElementById('mapReset').onclick=()=>{
  selectedRegion=null; hoveredRegion=null;
- const all=layerGroup.getLayers();
+ const rs=document.getElementById('regionSelect'); if(rs) rs.value='';
+ render();
  if(all.length){map.fitBounds(L.featureGroup(all).getBounds(),{padding:[28,28],maxZoom:5});}
  renderTrend(null);
 };
