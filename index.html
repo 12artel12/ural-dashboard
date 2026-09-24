@@ -169,8 +169,12 @@ if(regionSelect){
  });
 }
 
-const map=L.map('map',{zoomControl:false,attributionControl:false,scrollWheelZoom:false});
-const layerGroup=L.layerGroup().addTo(map);
+let map=null;
+let layerGroup=null;
+if(window.L){
+  map=L.map('map',{zoomControl:false,attributionControl:false,scrollWheelZoom:false});
+  layerGroup=L.layerGroup().addTo(map);
+}
 let geoCache={};
 let lastMapLayers=[];
 
@@ -217,23 +221,91 @@ async function loadGeo(region){
  geoCache[key]=gj;return gj;
 }
 
+function escapeHtml(s){
+ return String(s).replace(/[&<>"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch]));
+}
+function collectCoords(g, out=[]){
+ if(!g)return out;
+ if(g.type==='FeatureCollection'){g.features.forEach(f=>collectCoords(f,out));}
+ else if(g.type==='Feature'){collectCoords(g.geometry,out);}
+ else if(g.type==='GeometryCollection'){g.geometries.forEach(x=>collectCoords(x,out));}
+ else if(g.coordinates){
+   const walk=a=>{
+     if(Array.isArray(a)&&typeof a[0]==='number') out.push(a);
+     else if(Array.isArray(a)) a.forEach(walk);
+   };
+   walk(g.coordinates);
+ }
+ return out;
+}
+function geometryPath(g,project){
+ if(!g)return '';
+ const ringPath=ring=>ring.map((p,i)=>(i?'L':'M')+project(p[0],p[1]).join(',')).join(' ')+' Z';
+ if(g.type==='Feature')return geometryPath(g.geometry,project);
+ if(g.type==='Polygon')return g.coordinates.map(ringPath).join(' ');
+ if(g.type==='MultiPolygon')return g.coordinates.flat().map(ringPath).join(' ');
+ if(g.type==='GeometryCollection')return g.geometries.map(x=>geometryPath(x,project)).join(' ');
+ return '';
+}
+async function drawSvgMap(filtered,month,compare){
+ const box=document.getElementById('map');
+ box.innerHTML='<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;color:#8ea3b5;font-size:13px">Загрузка карты…</div>';
+ const geos=await Promise.all(filtered.map(async r=>{
+   try{return {r,gj:await loadGeo(r)};}catch(e){return {r,gj:null};}
+ }));
+ const pts=geos.flatMap(x=>collectCoords(x.gj,[]));
+ if(!pts.length){
+   box.innerHTML='<div style="padding:80px 30px;text-align:center;color:#8ea3b5">Геоданные не загрузились. Данные аналитики доступны справа.</div>';
+   return;
+ }
+ const xs=pts.map(p=>p[0]), ys=pts.map(p=>p[1]);
+ const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+ const w=Math.max(600,box.clientWidth||800), h=Math.max(450,box.clientHeight||600);
+ const pad=35, sx=(w-2*pad)/(maxX-minX||1), sy=(h-2*pad)/(maxY-minY||1), sc=Math.min(sx,sy);
+ const ox=(w-(maxX-minX)*sc)/2, oy=(h-(maxY-minY)*sc)/2;
+ const project=(lon,lat)=>[+(ox+(lon-minX)*sc).toFixed(2),+(h-(oy+(lat-minY)*sc)).toFixed(2)];
+ const parts=[];
+ for(const item of geos){
+   if(!item.gj)continue;
+   const v=value(item.r,activeCat,month);
+   const p=month==='ALL'?previousPeriodValue(item.r,activeCat,month):value(item.r,activeCat,compare);
+   const d=calcDyn(v,p);
+   const path=geometryPath(item.gj,project);
+   if(!path)continue;
+   const ptsR=collectCoords(item.gj,[]);
+   const cx=ptsR.reduce((s,p)=>s+p[0],0)/(ptsR.length||1);
+   const cy=ptsR.reduce((s,p)=>s+p[1],0)/(ptsR.length||1);
+   const [lx,ly]=project(cx,cy);
+   parts.push(`<g data-region="${escapeHtml(item.r.name)}" style="cursor:pointer"><path d="${path}" fill="${color(d===null?0:d)}" fill-opacity=".78" stroke="#bfe9ff" stroke-width="1.2" vector-effect="non-scaling-stroke"></path><text x="${lx}" y="${ly}" text-anchor="middle" fill="#eef5fb" font-size="11" font-weight="700" paint-order="stroke" stroke="#071018" stroke-width="3" stroke-linejoin="round">${escapeHtml(item.r.name.replace('автономный округ - Югра','АО — Югра'))}</text></g>`);
+ }
+ box.innerHTML=`<svg viewBox="0 0 ${w} ${h}" width="100%" height="100%" preserveAspectRatio="xMidYMid meet" style="display:block">${parts.join('')}</svg>`;
+ box.querySelectorAll('g[data-region]').forEach(g=>{
+   const r=DATA.find(x=>x.name===g.dataset.region);
+   g.addEventListener('mouseenter',()=>g.querySelector('path').setAttribute('stroke-width','3'));
+   g.addEventListener('mouseleave',()=>g.querySelector('path').setAttribute('stroke-width','1.2'));
+   g.addEventListener('click',()=>{
+     selectedRegion=r;
+     if(regionSelect)regionSelect.value=r.name;
+     render();
+   });
+ });
+}
 async function drawMap(filtered,month,compare){
+ if(!map){return drawSvgMap(filtered,month,compare);}
  layerGroup.clearLayers();
  const promises=filtered.map(async r=>{
   try{
    const gj=await loadGeo(r);
    const v=value(r,activeCat,month), p=month==='ALL'?previousPeriodValue(r,activeCat,month):value(r,activeCat,compare);
    const d=calcDyn(v,p);
-   const lyr=L.geoJSON(gj,{style:{
-    color:'#bfe9ff',weight:1.3,opacity:.9,fillColor:color(d===null?0:d),fillOpacity:.78
-   }});
+   const lyr=L.geoJSON(gj,{style:{color:'#bfe9ff',weight:1.3,opacity:.9,fillColor:color(d===null?0:d),fillOpacity:.78}});
    lyr.bindTooltip(`<div style="font-weight:750">${r.name}</div><div>${fmt(v)}</div><div style="color:${d===null?'#9db0bf':d>=0?'#35ee81':'#ff8078'}">${d===null?'—':pct(d)}</div>`,{sticky:true,direction:'center'});
    lyr.on('mouseover',e=>{e.target.setStyle({weight:3,color:'#ffffff',fillOpacity:.92});e.target.bringToFront();});
    lyr.on('mouseout',e=>{e.target.setStyle({weight:1.3,color:'#bfe9ff',fillOpacity:.78});});
    lyr.on('click',e=>{
     selectedRegion=r;
     map.fitBounds(e.target.getBounds(),{padding:[55,55],maxZoom:7});
-    const rs=document.getElementById('regionSelect'); if(rs) rs.value=r.name;
+    if(regionSelect)regionSelect.value=r.name;
     render();
    });
    lyr.addTo(layerGroup);
@@ -242,10 +314,7 @@ async function drawMap(filtered,month,compare){
  });
  await Promise.all(promises);
  lastMapLayers=layerGroup.getLayers();
- if(lastMapLayers.length){
-  const group=L.featureGroup(lastMapLayers);
-  map.fitBounds(group.getBounds(),{padding:[28,28],maxZoom:5});
- }
+ if(lastMapLayers.length)map.fitBounds(L.featureGroup(lastMapLayers).getBounds(),{padding:[28,28],maxZoom:5});
 }
 
 let trendChart=null;
@@ -263,6 +332,13 @@ function renderTrend(region=null){
  document.getElementById('chartValue').textContent=fmt(current);
  document.getElementById('chartDyn').textContent=d===null?'За весь период':pct(d)+' к '+compare+' 2026';
  if(trendChart)trendChart.destroy();
+ if(!window.Chart){
+   const el=document.getElementById('trend'), w=Math.max(520,el.parentElement.clientWidth||700), h=Math.max(300,el.parentElement.clientHeight||420);
+   const maxV=Math.max(...vals,1), px=55, py=25, pw=w-190, ph=h-70;
+   const pts=vals.map((v,i)=>[px+i*(pw/(vals.length-1)),py+ph-(v/maxV)*ph]);
+   el.outerHTML='<svg id="trend" viewBox="0 0 '+w+' '+h+'" width="100%" height="100%" style="display:block"><line x1="'+px+'" y1="'+py+'" x2="'+px+'" y2="'+(py+ph)+'" stroke="#294052"/><line x1="'+px+'" y1="'+(py+ph)+'" x2="'+(px+pw)+'" y2="'+(py+ph)+'" stroke="#294052"/><polyline fill="none" stroke="#36ee81" stroke-width="3" points="'+pts.map(p=>p.join(',')).join(' ')+'"/>'+pts.map((p,i)=>'<circle cx="'+p[0]+'" cy="'+p[1]+'" r="4" fill="#36ee81"/><text x="'+p[0]+'" y="'+(py+ph+22)+'" text-anchor="middle" fill="#8ea3b5" font-size="11">'+labels[i]+'</text>').join('')+'</svg>';
+   return;
+ }
  trendChart=new Chart(document.getElementById('trend'),{
   type:'line',
   data:{labels:labels,datasets:[{data:vals,borderColor:'#36ee81',backgroundColor:'rgba(25,229,111,.10)',fill:true,tension:.35,pointRadius:3,pointBackgroundColor:'#36ee81'}]},
@@ -309,7 +385,7 @@ document.getElementById('mapReset').onclick=()=>{
  selectedRegion=null; hoveredRegion=null;
  const rs=document.getElementById('regionSelect'); if(rs) rs.value='';
  render();
- if(lastMapLayers.length){map.fitBounds(L.featureGroup(lastMapLayers).getBounds(),{padding:[28,28],maxZoom:5});}
+ if(map && lastMapLayers.length){map.fitBounds(L.featureGroup(lastMapLayers).getBounds(),{padding:[28,28],maxZoom:5});}
  renderTrend(null);
 };
 render();
